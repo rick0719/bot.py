@@ -1,7 +1,12 @@
 services:
   - type: worker
     name: bot-cripto-automacao
-    env: python
+    runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
+    envVars:
+      - key: TOKEN
+        sync: false
+      - key: CHAT_ID
+        sync: false

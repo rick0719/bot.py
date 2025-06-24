@@ -3,12 +3,15 @@ import time
 from datetime import datetime
 
 # === CONFIGURAÇÃO DO TELEGRAM ===
-token = '8185549719:AAEJyWpN3VZDq5AQ01cstllurqDw55s7h3A'
-chat_id = '6291337075'
+token = 'SEU_TOKEN_AQUI'
+chat_id = 'SEU_CHAT_ID_AQUI'
 url_telegram = f'https://api.telegram.org/bot{token}/sendMessage'
 
 # === FUNÇÕES DE ANÁLISE ===
 def calcular_rsi(precos, periodo=14):
+    if len(precos) <= periodo:
+        return 50  # Valor neutro para evitar erro
+
     ganhos, perdas = [], []
     for i in range(1, periodo + 1):
         dif = precos[i] - precos[i - 1]
@@ -26,6 +29,9 @@ def calcular_rsi(precos, periodo=14):
     return round(100 - (100 / (1 + rs)), 2)
 
 def calcular_macd(precos):
+    if len(precos) < 26:
+        return 0  # MACD neutro se não houver dados suficientes
+
     def ema(lista, p):
         k = 2 / (p + 1)
         ema = lista[0]
@@ -37,18 +43,21 @@ def calcular_macd(precos):
     return round(ema12 - ema26, 4)
 
 def tipo_candle(c):
-    a, m, mi, f = float(c[1]), float(c[2]), float(c[3]), float(c[4])
-    corpo = abs(f - a)
-    pavio_sup = m - max(a, f)
-    pavio_inf = min(a, f) - mi
-    if corpo > pavio_sup and corpo > pavio_inf:
-        return "Candle de força de alta" if f > a else "Candle de força de baixa"
-    elif pavio_inf > corpo * 1.5:
-        return "Martelo (absorção compradora)"
-    elif pavio_sup > corpo * 1.5:
-        return "Enforcado (pressão vendedora)"
-    else:
-        return "Candle neutro"
+    try:
+        a, m, mi, f = float(c[1]), float(c[2]), float(c[3]), float(c[4])
+        corpo = abs(f - a)
+        pavio_sup = m - max(a, f)
+        pavio_inf = min(a, f) - mi
+        if corpo > pavio_sup and corpo > pavio_inf:
+            return "Candle de força de alta" if f > a else "Candle de força de baixa"
+        elif pavio_inf > corpo * 1.5:
+            return "Martelo (absorção compradora)"
+        elif pavio_sup > corpo * 1.5:
+            return "Enforcado (pressão vendedora)"
+        else:
+            return "Candle neutro"
+    except:
+        return "Candle inválido"
 
 # === LOOP INFINITO ===
 while True:

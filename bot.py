@@ -1,112 +1,128 @@
-import requests
-import time
+import requests, time
 from datetime import datetime
 
-# === CONFIGURAÇÃO DO TELEGRAM ===
-token = 'SEU_TOKEN_AQUI'
-chat_id = 'SEU_CHAT_ID_AQUI'
-url_telegram = f'https://api.telegram.org/bot{token}/sendMessage'
+# === TELEGRAM CONFIG ===
+token = '8185549719:AAEJyWpN3VZDq5AQ01cstllurqDw55s7h3A'
+chat_id = '7594105835'
+base_url = f'https://api.telegram.org/bot{token}'
+offset = 0
 
-# === FUNÇÕES DE ANÁLISE ===
+# === FUNÇÕES TÉCNICAS ===
+def get_klines():
+    url = "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=100"
+    return requests.get(url).json()
+
+def calcular_ema(precos, periodo):
+    k = 2 / (periodo + 1)
+    ema = precos[0]
+    for p in precos[1:]:
+        ema = (p - ema) * k + ema
+    return ema
+
+def tendencia(ema9, ema21):
+    if abs(ema9 - ema21) < 0.0003: return "🔄 LATERAL"
+    return "📈 ALTA" if ema9 > ema21 else "📉 BAIXA"
+
 def calcular_rsi(precos, periodo=14):
-    if len(precos) <= periodo:
-        return 50  # Valor neutro para evitar erro
-
-    ganhos, perdas = [], []
-    for i in range(1, periodo + 1):
-        dif = precos[i] - precos[i - 1]
-        ganhos.append(max(dif, 0))
-        perdas.append(abs(min(dif, 0)))
+    ganhos = [max(precos[i] - precos[i-1], 0) for i in range(1, periodo+1)]
+    perdas = [abs(min(precos[i] - precos[i-1], 0)) for i in range(1, periodo+1)]
     media_ganho = sum(ganhos) / periodo
     media_perda = sum(perdas) / periodo
-    for i in range(periodo + 1, len(precos)):
-        dif = precos[i] - precos[i - 1]
-        ganho = max(dif, 0)
-        perda = abs(min(dif, 0))
-        media_ganho = (media_ganho * (periodo - 1) + ganho) / periodo
-        media_perda = (media_perda * (periodo - 1) + perda) / periodo
-    rs = media_ganho / media_perda if media_perda != 0 else 100
+    for i in range(periodo+1, len(precos)):
+        dif = precos[i] - precos[i-1]
+        media_ganho = (media_ganho * (periodo - 1) + max(dif, 0)) / periodo
+        media_perda = (media_perda * (periodo - 1) + abs(min(dif, 0))) / periodo
+    if media_perda == 0: return 100
+    rs = media_ganho / media_perda
     return round(100 - (100 / (1 + rs)), 2)
 
 def calcular_macd(precos):
-    if len(precos) < 26:
-        return 0  # MACD neutro se não houver dados suficientes
-
-    def ema(lista, p):
-        k = 2 / (p + 1)
-        ema = lista[0]
-        for preco in lista[1:]:
-            ema = (preco - ema) * k + ema
-        return ema
-    ema12 = ema(precos[-26:], 12)
-    ema26 = ema(precos[-26:], 26)
-    return round(ema12 - ema26, 4)
+    def ema(p, l):
+        k = 2 / (l + 1)
+        e = p[0]
+        for x in p[1:]:
+            e = (x - e) * k + e
+        return e
+    return round(ema(precos[-26:], 12) - ema(precos[-26:], 26), 4)
 
 def tipo_candle(c):
+    a, h, l, f = map(float, c[1:5])
+    corpo = abs(f - a)
+    pavio_sup = h - max(f, a)
+    pavio_inf = min(f, a) - l
+    if corpo > pavio_sup and corpo > pavio_inf:
+        return "🔥 Alta" if f > a else "❄️ Baixa"
+    elif pavio_inf > corpo * 1.5: return "🟢 Martelo"
+    elif pavio_sup > corpo * 1.5: return "🔴 Enforcado"
+    else: return "⚪ Neutro"
+
+def enviar(txt):
+    print(txt)
+    requests.post(f"{base_url}/sendMessage", data={'chat_id': chat_id, 'text': txt, 'parse_mode': 'Markdown'})
+
+def gerar_resumo():
+    dados = get_klines()
+    closes = [float(c[4]) for c in dados]
+    vols = [float(c[5]) for c in dados]
+    preco = closes[-1]
+    hora = datetime.now().strftime('%H:%M:%S')
+    
+    ema9 = calcular_ema(closes[-10:], 9)
+    ema21 = calcular_ema(closes[-25:], 21)
+    tend = tendencia(ema9, ema21)
+    rsi = calcular_rsi(closes)
+    macd = calcular_macd(closes)
+    vol_med = sum(vols[-10:]) / 10
+    vol = vols[-1]
+    cndl = tipo_candle(dados[-1])
+
+    if rsi < 30 and macd > 0:
+        leitura = "Possível reversão em formação"
+    elif tend == "📉 BAIXA" and vol > vol_med * 1.5:
+        leitura = "Pressão vendedora acentuada"
+    elif tend == "📈 ALTA" and rsi > 70:
+        leitura = "Mercado sobrecomprado — cautela"
+    else:
+        leitura = "Mercado neutro ou aguardando decisão"
+
+    msg = (
+        f"*📍 BTCUSDT – RESUMO M5*\n"
+        f"💰 Preço: `{preco:.2f}`\n"
+        f"📊 Tendência: {tend}\n"
+        f"📈 RSI: *{rsi}*\n"
+        f"🧭 MACD: `{macd}`\n"
+        f"🕯️ Candle: {cndl}\n"
+        f"📦 Volume: `{vol:.2f}` (média: {vol_med:.2f})\n"
+        f"🧠 Leitura: _{leitura}_\n"
+        f"🕓 {hora}"
+    )
+    enviar(msg)
+
+# === COMANDOS ===
+def processar_comando(txt):
+    if txt == '/resumo':
+        gerar_resumo()
+    else:
+        enviar("🤖 Comando não reconhecido. Use /resumo")
+
+def checar_msgs():
+    global offset
     try:
-        a, m, mi, f = float(c[1]), float(c[2]), float(c[3]), float(c[4])
-        corpo = abs(f - a)
-        pavio_sup = m - max(a, f)
-        pavio_inf = min(a, f) - mi
-        if corpo > pavio_sup and corpo > pavio_inf:
-            return "Candle de força de alta" if f > a else "Candle de força de baixa"
-        elif pavio_inf > corpo * 1.5:
-            return "Martelo (absorção compradora)"
-        elif pavio_sup > corpo * 1.5:
-            return "Enforcado (pressão vendedora)"
+        r = requests.get(f"{base_url}/getUpdates?offset={offset}").json()
+        if "result" in r:
+            for msg in r["result"]:
+                offset = msg["update_id"] + 1
+                if "message" in msg and "text" in msg["message"]:
+                    texto = msg["message"]["text"].strip().lower()
+                    chat = msg["message"]["chat"]["id"]
+                    if str(chat) == chat_id:
+                        processar_comando(texto)
         else:
-            return "Candle neutro"
-    except:
-        return "Candle inválido"
-
-# === LOOP INFINITO ===
-while True:
-    try:
-        agora = datetime.now().strftime("%H:%M:%S")
-
-        # === M5 ===
-        dados_5m = requests.get('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=5m&limit=100').json()
-        closes5m = [float(c[4]) for c in dados_5m]
-        vols5m = [float(c[5]) for c in dados_5m]
-        candle5m = dados_5m[-1]
-        rsi5 = calcular_rsi(closes5m)
-        macd5 = calcular_macd(closes5m)
-        estrutura5 = tipo_candle(candle5m)
-
-        if rsi5 < 30 and macd5 > 0 and "alta" in estrutura5:
-            msg = f"🦈 COMPRA INSTITUCIONAL [M5]\n⏰ {agora}\nRSI: {rsi5} | MACD: {macd5}\n{estrutura5}"
-            print(msg)
-            requests.post(url_telegram, data={'chat_id': chat_id, 'text': f"🚨 {msg}"})
-
-        elif rsi5 > 70 and macd5 < 0 and "baixa" in estrutura5:
-            msg = f"🦈 VENDA INSTITUCIONAL [M5]\n⏰ {agora}\nRSI: {rsi5} | MACD: {macd5}\n{estrutura5}"
-            print(msg)
-            requests.post(url_telegram, data={'chat_id': chat_id, 'text': f"🚨 {msg}"})
-        else:
-            print(f"[{agora}] ⏸️ M5 sem sinal | RSI={rsi5} | MACD={macd5} | {estrutura5}")
-
-        # === M1 ===
-        dados_1m = requests.get('https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=100').json()
-        closes1m = [float(c[4]) for c in dados_1m]
-        vols1m = [float(c[5]) for c in dados_1m]
-        candle1m = dados_1m[-1]
-        rsi1 = calcular_rsi(closes1m)
-        macd1 = calcular_macd(closes1m)
-        estrutura1 = tipo_candle(candle1m)
-
-        if rsi1 < 40 and macd1 > -5 and "alta" in estrutura1:
-            msg = f"🐟 COMPRA LEVE [M1]\n⏰ {agora}\nRSI: {rsi1} | MACD: {macd1}\n{estrutura1}"
-            print(msg)
-            requests.post(url_telegram, data={'chat_id': chat_id, 'text': f"⚠️ {msg}"})
-
-        elif rsi1 > 60 and macd1 < 0 and "baixa" in estrutura1:
-            msg = f"🐟 VENDA LEVE [M1]\n⏰ {agora}\nRSI: {rsi1} | MACD: {macd1}\n{estrutura1}"
-            print(msg)
-            requests.post(url_telegram, data={'chat_id': chat_id, 'text': f"⚠️ {msg}"})
-        else:
-            print(f"[{agora}] ⏸️ M1 sem sinal | RSI={rsi1} | MACD={macd1} | {estrutura1}")
-
+            print("⚠️ Nenhuma nova mensagem ou erro na API")
     except Exception as e:
-        print("❌ Erro detectado:", e)
+        print("❌ Erro:", e)
 
-    time.sleep(60)
+# === LOOP ===
+while True:
+    checar_msgs()
+    time.sleep(3)
